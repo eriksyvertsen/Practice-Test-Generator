@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PDF Quiz Generator</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 min-h-screen p-8">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-3xl font-bold mb-8">PDF Quiz Generator</h1>
+
+        <!-- Error Alert -->
+        <div id="errorAlert" class="hidden bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">
+            <span id="errorMessage"></span>
+        </div>
+
+        <!-- Upload Section -->
+        <div class="bg-white p-6 rounded-lg shadow-md mb-8">
+            <h2 class="text-xl font-semibold mb-4">Upload Study Materials</h2>
+            <form id="uploadForm" class="mb-4">
+                <input type="file" multiple accept=".pdf" 
+                       class="block w-full text-sm text-gray-500 mb-4
+                              file:mr-4 file:py-2 file:px-4
+                              file:rounded-full file:border-0
+                              file:text-sm file:font-semibold
+                              file:bg-blue-50 file:text-blue-700
+                              hover:file:bg-blue-100">
+                <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+                    Upload PDFs
+                </button>
+            </form>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div id="loadingIndicator" class="hidden">
+            <div class="flex items-center justify-center">
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                <span class="ml-2">Generating quiz...</span>
+            </div>
+        </div>
+
+        <!-- Quiz Section -->
+        <div id="quizContainer" class="bg-white p-6 rounded-lg shadow-md hidden">
+            <h2 class="text-xl font-semibold mb-4">Practice Quiz</h2>
+            <div id="questionContainer"></div>
+            <div class="mt-4">
+                <button id="generateNew" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
+                    Generate New Quiz
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentQuestions = [];
+        let currentScore = 0;
+        let answeredQuestions = 0;
+
+        function showError(message) {
+            const errorAlert = document.getElementById('errorAlert');
+            const errorMessage = document.getElementById('errorMessage');
+            errorMessage.textContent = message;
+            errorAlert.classList.remove('hidden');
+            setTimeout(() => {
+                errorAlert.classList.add('hidden');
+            }, 5000);
+        }
+
+        function showLoading(show) {
+            document.getElementById('loadingIndicator').classList.toggle('hidden', !show);
+        }
+
+        // Handle file upload
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData();
+            const fileInput = e.target.querySelector('input[type="file"]');
+
+            if (fileInput.files.length === 0) {
+                showError('Please select at least one PDF file.');
+                return;
+            }
+
+            for (const file of fileInput.files) {
+                formData.append('files', file);
+            }
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+
+                if (response.ok) {
+                    generateQuiz();
+                }
+            } catch (error) {
+                showError('Error uploading files: ' + error.message);
+            }
+        });
+
+        // Generate new quiz
+        document.getElementById('generateNew').addEventListener('click', generateQuiz);
+
+        async function generateQuiz() {
+            try {
+                showLoading(true);
+                const response = await fetch('/generate-quiz', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+
+                if (data.questions) {
+                    currentQuestions = data.questions;
+                    currentScore = 0;
+                    answeredQuestions = 0;
+                    displayQuestions(currentQuestions);
+                    document.getElementById('quizContainer').classList.remove('hidden');
+                }
+            } catch (error) {
+                showError('Error generating quiz: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function displayQuestions(questions) {
+            const container = document.getElementById('questionContainer');
+            container.innerHTML = '';
+
+            questions.forEach((q, index) => {
+                const questionDiv = document.createElement('div');
+                questionDiv.className = 'mb-6 p-4 border rounded';
+                questionDiv.innerHTML = `
+                    <p class="font-semibold mb-2">Question ${index + 1}: ${q.question}</p>
+                    <div class="space-y-2">
+                        ${q.options.map((option, i) => `
+                            <div>
+                                <label class="inline-flex items-center">
+                                    <input type="radio" name="q${index}" value="${i}" 
+                                           class="form-radio" onchange="checkAnswer(${index}, ${i})">
+                                    <span class="ml-2">${option}</span>
+                                </label>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="mt-2 hidden text-sm" id="explanation${index}"></div>
+                `;
+                container.appendChild(questionDiv);
+            });
+        }
+
+        function checkAnswer(questionIndex, selectedAnswer) {
+            const question = currentQuestions[questionIndex];
+            const explanationDiv = document.getElementById(`explanation${questionIndex}`);
+
+            if (selectedAnswer === question.correct_answer) {
+                currentScore++;
+                explanationDiv.className = 'mt-2 text-sm text-green-600';
+                explanationDiv.textContent = 'Correct! ' + question.explanation;
+            } else {
+                explanationDiv.className = 'mt-2 text-sm text-red-600';
+                explanationDiv.textContent = `Incorrect. The correct answer is: ${question.options[question.correct_answer]}. ${question.explanation}`;
+            }
+
+            explanationDiv.classList.remove('hidden');
+            answeredQuestions++;
+
+            if (answeredQuestions === currentQuestions.length) {
+                showFinalScore();
+            }
+        }
+
+        function showFinalScore() {
+            const scoreDiv = document.createElement('div');
+            scoreDiv.className = 'mt-6 p-4 bg-blue-50 rounded';
+            scoreDiv.innerHTML = `
+                <h3 class="font-bold text-lg">Quiz Complete!</h3>
+                <p>Your score: ${currentScore} out of ${currentQuestions.length} (${Math.round(currentScore/currentQuestions.length*100)}%)</p>
+            `;
+            document.getElementById('questionContainer').appendChild(scoreDiv);
+        }
+    </script>
+</body>
+</html>
